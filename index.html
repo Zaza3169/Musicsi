@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
-    <!-- Etiquetas PWA para que se vea como App Nativa en iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
@@ -112,7 +111,7 @@
 
     <div class="add-container">
         <div class="add-label">＋ Añadir Música</div>
-        <input type="file" id="file-input" accept="audio/*" multiple>
+        <input type="file" id="file-input" accept="audio/mpeg,audio/mp4,audio/x-m4a,.mp3,.m4a,.wav,.ogg" multiple>
     </div>
 </header>
 
@@ -181,10 +180,12 @@
 <audio id="audio" preload="metadata"></audio>
 
 <script>
-    const APP_VERSION = "Versión 3.0 (IndexedDB Native Fix)";
+    // ==========================================
+    // 👇 VERSIÓN ACTUAL 👇
+    const APP_VERSION = "Versión 2.1 (ArrayBuffer Fix)";
     document.getElementById('app-version').textContent = APP_VERSION;
 
-    const DB_NAME = 'SpotijaiFinalDB';
+    const DB_NAME = 'SpotijaiDB_V3';
     const DB_VERSION = 1;
     let db;
 
@@ -192,13 +193,23 @@
         return new Promise((resolve, reject) => {
             const req = indexedDB.open(DB_NAME, DB_VERSION);
             req.onupgradeneeded = (e) => {
-                const dbInst = e.target.result;
-                if (!dbInst.objectStoreNames.contains('songs')) {
-                    dbInst.createObjectStore('songs', { keyPath: 'id' });
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('songs')) {
+                    db.createObjectStore('songs', { keyPath: 'id' });
                 }
             };
             req.onsuccess = (e) => { db = e.target.result; resolve(); };
             req.onerror = (e) => reject(e);
+        });
+    }
+
+    // Función clave: Convierte el archivo a ArrayBuffer
+    function fileToArrayBuffer(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = (error) => reject(error);
+            reader.readAsArrayBuffer(file);
         });
     }
 
@@ -211,7 +222,7 @@
         });
     }
 
-    function getAllSongsFromDB() {
+    function getSongsFromDB() {
         return new Promise((resolve, reject) => {
             const tx = db.transaction('songs', 'readonly');
             const req = tx.objectStore('songs').getAll();
@@ -224,14 +235,7 @@
     const svgPlay = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
     const svgPause = '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
 
-    let state = { 
-        songs: [], 
-        playlist: JSON.parse(localStorage.getItem('spotijai_playlist') || '[]'), 
-        currentId: null, 
-        isPlaying: false, 
-        currentTab: 'all' 
-    };
-
+    const state = { songs: [], playlist: [], currentId: null, isPlaying: false, currentTab: 'all' };
     const $ = (id) => document.getElementById(id);
     const audio = $('audio');
 
@@ -246,44 +250,64 @@
 
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
+        
         if (files.length === 0) return;
         
-        showToast("⏳ Guardando " + files.length + " canción(es)...");
+        $('empty-msg').style.display = 'none';
+        showToast("⏳ Procesando " + files.length + " archivo(s)...");
+        
         let loadedCount = 0;
+        let errorMsg = "";
 
         for (const file of files) {
+            if (file.size === 0) {
+                errorMsg = "❌ El archivo " + file.name + " está vacío o es de iCloud.";
+                continue;
+            }
+            
             try {
-                const songId = 'id_' + Date.now().toString() + '_' + Math.random().toString(36).substr(2, 4);
-                const songRecord = {
+                // Convertimos a ArrayBuffer en lugar de Blob o Base64
+                const arrayBuffer = await fileToArrayBuffer(file);
+                
+                const songId = Date.now().toString() + Math.random().toString(36).substring(2, 6);
+                const songData = {
                     id: songId,
                     name: file.name.replace(/\.[^.]+$/, ''),
-                    artist: 'Archivo Local',
-                    fileData: file
+                    artist: 'Archivo local',
+                    data: arrayBuffer, // Guardamos el ArrayBuffer
+                    type: file.type || 'audio/mpeg' // Guardamos el tipo MIME
                 };
-
-                await saveSongToDB(songRecord);
-                songRecord.url = URL.createObjectURL(file);
-                state.songs.push(songRecord);
+                
+                await saveSongToDB(songData);
+                
+                // Para reproducir en la sesión actual, creamos la URL desde el ArrayBuffer
+                const blob = new Blob([arrayBuffer], { type: songData.type });
+                songData.url = URL.createObjectURL(blob);
+                
+                state.songs.push(songData);
                 loadedCount++;
-            } catch (err) {
-                console.error("Error guardando en IndexedDB", err);
+            } catch(err) {
+                console.error(err);
+                errorMsg = "❌ Error al guardar. Puede que no haya espacio.";
             }
         }
 
-        e.target.value = '';
+        e.target.value = ''; 
         renderSongs();
-
+        
         if (loadedCount > 0) {
             showToast("✅ " + loadedCount + " canción(es) guardada(s)");
-        } else {
-            alert("Error al intentar guardar los archivos.");
+        } else if (errorMsg) {
+            alert(errorMsg);
         }
     });
 
-    $('tab-all').addEventListener('click', () => { state.currentTab = 'all'; updateTabs(); renderSongs(); });$('tab-playlist').addEventListener('click', () => { state.currentTab = 'playlist'; updateTabs(); renderSongs(); });
+    $('tab-all').addEventListener('click', () => { state.currentTab = 'all'; updateTabs(); renderSongs(); });
+    $('tab-playlist').addEventListener('click', () => { state.currentTab = 'playlist'; updateTabs(); renderSongs(); });
 
     function updateTabs() {
-        $('tab-all').classList.toggle('active', state.currentTab === 'all');$('tab-playlist').classList.toggle('active', state.currentTab === 'playlist');
+        $('tab-all').classList.toggle('active', state.currentTab === 'all');
+        $('tab-playlist').classList.toggle('active', state.currentTab === 'playlist');
     }
 
     function formatTime(sec) { if (!isFinite(sec)) return '0:00'; const m = Math.floor(sec / 60); const s = Math.floor(sec % 60).toString().padStart(2, '0'); return `${m}:${s}`; }
@@ -298,7 +322,7 @@
 
         if (displaySongs.length === 0) {
             songListEl.innerHTML = `<div class="empty-state">
-                ${state.currentTab === 'playlist' ? 'Tu lista está vacía.<br>Desliza una canción a la derecha para añadirla.' : 'No hay canciones guardadas.<br><br><button class="reset-btn" onclick="resetDB()">Borrar Biblioteca</button>'}
+                ${state.currentTab === 'playlist' ? 'Tu lista está vacía.<br>Desliza una canción a la derecha para añadirla.' : 'No hay canciones guardadas.<br><br><button class="reset-btn" onclick="resetDB()">Borrar Base de Datos</button>'}
             </div>`;
             return;
         }
@@ -369,7 +393,6 @@
     function addToPlaylist(id) {
         if (!state.playlist.includes(id)) {
             state.playlist.push(id);
-            localStorage.setItem('spotijai_playlist', JSON.stringify(state.playlist));
             if (navigator.vibrate) navigator.vibrate(50);
             showToast("✅ Añadida a Mi Lista");
         } else {
@@ -382,22 +405,16 @@
         if (!song) return;
         
         state.currentId = id;
-
-        if (!song.url && song.fileData) {
-            song.url = URL.createObjectURL(song.fileData);
-        }
-
-        if (song.url) {
-            audio.src = song.url;
-            audio.load();
-            try {
-                await audio.play();
-                state.isPlaying = true;
-                updateUI();
-                expandPanel();
-            } catch (err) {
-                showToast("❌ Toca de nuevo para reproducir");
-            }
+        audio.src = song.url; 
+        audio.load();
+        
+        try {
+            await audio.play();
+            state.isPlaying = true;
+            updateUI();
+            expandPanel();
+        } catch (err) {
+            showToast("❌ Error al reproducir. Toca de nuevo.");
         }
 
         document.querySelectorAll('.song-content').forEach(el => {
@@ -406,14 +423,16 @@
         });
 
         audio.addEventListener('loadedmetadata', () => {
-            $('duration').textContent = formatTime(audio.duration);$('seek-bar').max = audio.duration;
+            $('duration').textContent = formatTime(audio.duration);
+            $('seek-bar').max = audio.duration;
         }, { once: true });
     }
 
     function updateUI() {
         const song = state.songs.find(s => s.id === state.currentId);
         if (song) {
-            $('mini-player').classList.remove('hidden');$('mini-title').textContent = song.name;
+            $('mini-player').classList.remove('hidden');
+            $('mini-title').textContent = song.name;
             $('mini-artist').textContent = song.artist;
             $('track-title').textContent = song.name;
             $('track-artist').textContent = song.artist;
@@ -429,9 +448,11 @@
         updateUI();
     }
 
-    $('btn-play').addEventListener('click', togglePlay);$('mini-play').addEventListener('click', togglePlay);
+    $('btn-play').addEventListener('click', togglePlay);
+    $('mini-play').addEventListener('click', togglePlay);
 
-    $('btn-next').addEventListener('click', () => nextSong(1));$('btn-prev').addEventListener('click', () => { if (audio.currentTime > 3) audio.currentTime = 0; else nextSong(-1); });
+    $('btn-next').addEventListener('click', () => nextSong(1));
+    $('btn-prev').addEventListener('click', () => { if (audio.currentTime > 3) audio.currentTime = 0; else nextSong(-1); });
 
     function nextSong(dir = 1) {
         const pool = state.currentTab === 'playlist' 
@@ -509,19 +530,20 @@
     window.resetDB = function() {
         if (confirm("¿Seguro que quieres borrar todas las canciones guardadas?")) {
             indexedDB.deleteDatabase(DB_NAME);
-            localStorage.clear();
             location.reload();
         }
     }
 
     (async function init() {
         await initDB();
-        const savedSongs = await getAllSongsFromDB();
+        const savedSongs = await getSongsFromDB();
         
-        state.songs = savedSongs.map(item => {
+        // Al cargar, reconstruimos el Blob desde el ArrayBuffer guardado
+        state.songs = savedSongs.map(song => {
+            const blob = new Blob([song.data], { type: song.type });
             return {
-                ...item,
-                url: item.fileData ? URL.createObjectURL(item.fileData) : null
+                ...song,
+                url: URL.createObjectURL(blob)
             };
         });
 
