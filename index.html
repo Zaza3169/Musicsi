@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
-    <!-- Etiquetas para que Safari lo trate como una App Nativa (PWA) -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
@@ -42,8 +41,9 @@
         .tab.active { background: var(--card); color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 
         .add-container { position: relative; width: 100%; margin-bottom: 20px; }
-        .add-btn { width: 100%; padding: 14px; border-radius: 12px; border: none; background: var(--accent); color: white; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        #file-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
+        /* Usamos un label en lugar de un botón para que iOS lo reconozca como selector de archivos */
+        .add-label { display: flex; width: 100%; padding: 14px; border-radius: 12px; background: var(--accent); color: white; font-size: 16px; font-weight: 600; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+        #file-input { display: none; }
 
         .song-wrapper { position: relative; margin-bottom: 2px; height: 64px; background: var(--accent); overflow: hidden; border-radius: 10px; touch-action: pan-y; }
         .swipe-bg { position: absolute; inset: 0; display: flex; align-items: center; padding-left: 20px; font-weight: 600; color: white; font-size: 15px; gap: 8px; }
@@ -104,8 +104,9 @@
         <div class="tab" id="tab-playlist">Mi Lista</div>
     </div>
 
+    <!-- Cambiamos el botón por un <label> conectado al input -->
     <div class="add-container">
-        <button class="add-btn">＋ Añadir Música</button>
+        <label for="file-input" class="add-label">＋ Añadir Música</label>
         <input type="file" id="file-input" accept="audio/*" multiple>
     </div>
 </header>
@@ -118,7 +119,7 @@
     <div class="mini-cover" id="mini-cover"></div>
     <div class="mini-meta">
         <div class="mini-title" id="mini-title">Sin reproducción</div>
-        <div class="song-artist" id="mini-artist">—</div>
+        <div class="mini-artist" id="mini-artist">—</div>
     </div>
     <button class="icon-btn" id="mini-play">
         <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -175,9 +176,6 @@
 <audio id="audio" preload="metadata"></audio>
 
 <script>
-    // ==========================================
-    // BASE DE DATOS LOCAL (INDEXEDDB)
-    // ==========================================
     const DB_NAME = 'SpotijaiDB';
     const DB_VERSION = 1;
     let db;
@@ -199,7 +197,7 @@
     function saveSongToDB(song) {
         return new Promise((resolve, reject) => {
             const tx = db.transaction('songs', 'readwrite');
-            tx.objectStore('songs').put(song); // Guardamos el objeto (incluye el archivo MP3)
+            tx.objectStore('songs').put(song);
             tx.oncomplete = () => resolve();
             tx.onerror = (e) => reject(e);
         });
@@ -214,9 +212,6 @@
         });
     }
 
-    // ==========================================
-    // LÓGICA DE LA APP
-    // ==========================================
     const svgMusic = '<svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
     const svgPlay = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
     const svgPause = '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
@@ -234,7 +229,6 @@
         toastTimeout = setTimeout(() => toast.classList.remove('show'), 2000);
     }
 
-    // Cargar archivos y guardarlos en la base de datos
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
@@ -251,13 +245,11 @@
                 id: songId,
                 name: file.name.replace(/\.[^.]+$/, ''),
                 artist: 'Archivo local',
-                fileBlob: file // Guardamos el archivo real
+                fileBlob: file
             };
             
-            // 1. Guardar en IndexedDB
             await saveSongToDB(songData);
             
-            // 2. Añadir al estado actual
             songData.url = URL.createObjectURL(file);
             state.songs.push(songData);
             loadedCount++;
@@ -440,7 +432,6 @@
     });
     audio.addEventListener('ended', () => nextSong(1));
 
-    // Lógica del Panel
     const panel = $('player-panel');
     const mini = $('mini-player');
     const dragArea = $('drag-area');
@@ -494,18 +485,14 @@
         }
     });
 
-    // ==========================================
-    // INICIALIZACIÓN (RECUPERAR CANCIONES)
-    // ==========================================
     (async function init() {
         await initDB();
         const savedSongs = await getSongsFromDB();
         
-        // Reconstruimos las URLs para que se puedan reproducir
         state.songs = savedSongs.map(song => {
             return {
                 ...song,
-                url: URL.createObjectURL(song.fileBlob) // Creamos enlace desde el archivo guardado
+                url: URL.createObjectURL(song.fileBlob)
             };
         });
 
