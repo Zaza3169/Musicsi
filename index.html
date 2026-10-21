@@ -21,7 +21,10 @@
         body.panel-expanded { padding-bottom: 0; overflow: hidden; }
         
         header { padding: calc(20px + var(--safe-top)) 0 20px; }
-        h1 { font-size: 34px; font-weight: 700; margin: 0; letter-spacing: -0.5px; margin-bottom: 20px; }
+        
+        /* ESTILO PARA LA VERSIÓN */
+        .version-text { font-size: 12px; color: var(--gray); margin-top: 4px; margin-bottom: 20px; display: block; font-weight: 600; }
+        h1 { font-size: 34px; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
         
         svg { fill: currentColor; width: 24px; height: 24px; }
         .icon-btn { background: none; border: none; color: white; padding: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -32,7 +35,7 @@
             background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             color: white; padding: 12px 24px; border-radius: 30px; font-size: 14px; font-weight: 600;
             opacity: 0; transition: all 0.3s ease; pointer-events: none; z-index: 2000;
-            border: 0.5px solid rgba(255,255,255,0.2); text-align: center;
+            border: 0.5px solid rgba(255,255,255,0.2); text-align: center; width: 80%; max-width: 300px;
         }
         .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -41,9 +44,9 @@
         .tab.active { background: var(--card); color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
 
         .add-container { position: relative; width: 100%; margin-bottom: 20px; }
-        /* Usamos un label en lugar de un botón para que iOS lo reconozca como selector de archivos */
         .add-label { display: flex; width: 100%; padding: 14px; border-radius: 12px; background: var(--accent); color: white; font-size: 16px; font-weight: 600; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
-        #file-input { display: none; }
+        /* Input visible para pruebas (puedes ocultarlo luego) */
+        #file-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
 
         .song-wrapper { position: relative; margin-bottom: 2px; height: 64px; background: var(--accent); overflow: hidden; border-radius: 10px; touch-action: pan-y; }
         .swipe-bg { position: absolute; inset: 0; display: flex; align-items: center; padding-left: 20px; font-weight: 600; color: white; font-size: 15px; gap: 8px; }
@@ -91,6 +94,9 @@
         .main-controls .icon-btn.active { color: var(--accent); }
 
         .empty-state { text-align: center; color: var(--gray); padding: 60px 20px; font-size: 15px; }
+        
+        /* BOTÓN DE RESET PARA PRUEBAS */
+        .reset-btn { background: #ff3b30; color: white; border: none; padding: 10px; border-radius: 10px; margin-top: 30px; width: 100%; font-weight: 600; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -99,14 +105,16 @@
 
 <header>
     <h1>Spotijai</h1>
+    <span class="version-text">Versión 1.2 (Safari Fix)</span>
+    
     <div class="tabs">
         <div class="tab active" id="tab-all">Todas</div>
         <div class="tab" id="tab-playlist">Mi Lista</div>
     </div>
 
-    <!-- Cambiamos el botón por un <label> conectado al input -->
     <div class="add-container">
-        <label for="file-input" class="add-label">＋ Añadir Música</label>
+        <!-- Usamos input con z-index alto, esto es a prueba de fallos en iOS -->
+        <div class="add-label">＋ Añadir Música</div>
         <input type="file" id="file-input" accept="audio/*" multiple>
     </div>
 </header>
@@ -226,19 +234,36 @@
         toast.textContent = msg;
         toast.classList.add('show');
         clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => toast.classList.remove('show'), 2000);
+        toastTimeout = setTimeout(() => toast.classList.remove('show'), 3000); // 3 segundos para que lo leas bien
     }
 
+    // LÓGICA DE SUBIDA CON DIAGNÓSTICO DE ERRORES
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
-        if (files.length === 0) return;
+        
+        if (files.length === 0) {
+            showToast("⚠️ No se seleccionó ningún archivo.");
+            return;
+        }
         
         $('empty-msg').style.display = 'none';
-        showToast("⏳ Guardando " + files.length + " canciones...");
+        showToast("⏳ Procesando " + files.length + " archivo(s)...");
         
         let loadedCount = 0;
+        let errorMsg = "";
+
         for (const file of files) {
-            if (file.size === 0) continue;
+            // DIAGNÓSTICO: Si el archivo pesa 0, es porque iCloud no lo descargó
+            if (file.size === 0) {
+                errorMsg = "❌ El archivo " + file.name + " está vacío. Descárgalo de iCloud primero.";
+                continue;
+            }
+            
+            // DIAGNÓSTICO: Si el archivo no es de audio
+            if (!file.type.includes('audio') && !file.name.endsWith('.mp3') && !file.name.endsWith('.m4a')) {
+                errorMsg = "❌ El archivo " + file.name + " no parece ser audio.";
+                continue;
+            }
             
             const songId = Date.now().toString() + Math.random().toString(36).substring(2, 6);
             const songData = {
@@ -248,16 +273,24 @@
                 fileBlob: file
             };
             
-            await saveSongToDB(songData);
-            
-            songData.url = URL.createObjectURL(file);
-            state.songs.push(songData);
-            loadedCount++;
+            try {
+                await saveSongToDB(songData);
+                songData.url = URL.createObjectURL(file);
+                state.songs.push(songData);
+                loadedCount++;
+            } catch(err) {
+                errorMsg = "❌ Error al guardar en la base de datos.";
+            }
         }
 
         e.target.value = ''; 
         renderSongs();
-        showToast("✅ " + loadedCount + " canciones guardadas");
+        
+        if (loadedCount > 0) {
+            showToast("✅ " + loadedCount + " canción(es) guardada(s)");
+        } else if (errorMsg) {
+            alert(errorMsg); // Usamos alert para que no se pierda el mensaje
+        }
     });
 
     $('tab-all').addEventListener('click', () => { state.currentTab = 'all'; updateTabs(); renderSongs(); });
@@ -280,7 +313,7 @@
 
         if (displaySongs.length === 0) {
             songListEl.innerHTML = `<div class="empty-state">
-                ${state.currentTab === 'playlist' ? 'Tu lista está vacía.<br>Desliza una canción a la derecha para añadirla.' : 'No hay canciones guardadas.'}
+                ${state.currentTab === 'playlist' ? 'Tu lista está vacía.<br>Desliza una canción a la derecha para añadirla.' : 'No hay canciones guardadas.<br><br><button class="reset-btn" onclick="resetDB()">Borrar Base de Datos</button>'}
             </div>`;
             return;
         }
@@ -484,6 +517,14 @@
             if (deltaY < -30 || Math.abs(deltaY) < 10) expandPanel();
         }
     });
+
+    // BORRAR BASE DE DATOS (Para pruebas)
+    window.resetDB = function() {
+        if (confirm("¿Seguro que quieres borrar todas las canciones guardadas?")) {
+            indexedDB.deleteDatabase(DB_NAME);
+            location.reload();
+        }
+    }
 
     (async function init() {
         await initDB();
