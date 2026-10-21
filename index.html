@@ -180,12 +180,10 @@
 <audio id="audio" preload="metadata"></audio>
 
 <script>
-    // ==========================================
-    // 👇 VERSIÓN ACTUAL 👇
-    const APP_VERSION = "Versión 2.1 (ArrayBuffer Fix)";
+    const APP_VERSION = "Versión 3.0 (Blob Nativo)";
     document.getElementById('app-version').textContent = APP_VERSION;
 
-    const DB_NAME = 'SpotijaiDB_V3';
+    const DB_NAME = 'SpotijaiDB_V4';
     const DB_VERSION = 1;
     let db;
 
@@ -200,16 +198,6 @@
             };
             req.onsuccess = (e) => { db = e.target.result; resolve(); };
             req.onerror = (e) => reject(e);
-        });
-    }
-
-    // Función clave: Convierte el archivo a ArrayBuffer
-    function fileToArrayBuffer(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = (error) => reject(error);
-            reader.readAsArrayBuffer(file);
         });
     }
 
@@ -250,56 +238,38 @@
 
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
-        
         if (files.length === 0) return;
         
         $('empty-msg').style.display = 'none';
-        showToast("⏳ Procesando " + files.length + " archivo(s)...");
+        showToast("⏳ Guardando " + files.length + " archivo(s)...");
         
         let loadedCount = 0;
-        let errorMsg = "";
 
+        // EL TRUCO: Guardar uno por uno para no saturar la memoria de Safari
         for (const file of files) {
-            if (file.size === 0) {
-                errorMsg = "❌ El archivo " + file.name + " está vacío o es de iCloud.";
-                continue;
-            }
+            if (file.size === 0) continue;
+            
+            const songId = Date.now().toString() + Math.random().toString(36).substring(2, 6);
+            const songData = {
+                id: songId,
+                name: file.name.replace(/\.[^.]+$/, ''),
+                artist: 'Archivo local',
+                fileBlob: file // Guardamos el archivo tal cual
+            };
             
             try {
-                // Convertimos a ArrayBuffer en lugar de Blob o Base64
-                const arrayBuffer = await fileToArrayBuffer(file);
-                
-                const songId = Date.now().toString() + Math.random().toString(36).substring(2, 6);
-                const songData = {
-                    id: songId,
-                    name: file.name.replace(/\.[^.]+$/, ''),
-                    artist: 'Archivo local',
-                    data: arrayBuffer, // Guardamos el ArrayBuffer
-                    type: file.type || 'audio/mpeg' // Guardamos el tipo MIME
-                };
-                
                 await saveSongToDB(songData);
-                
-                // Para reproducir en la sesión actual, creamos la URL desde el ArrayBuffer
-                const blob = new Blob([arrayBuffer], { type: songData.type });
-                songData.url = URL.createObjectURL(blob);
-                
+                songData.url = URL.createObjectURL(file);
                 state.songs.push(songData);
                 loadedCount++;
-            } catch(err) {
-                console.error(err);
-                errorMsg = "❌ Error al guardar. Puede que no haya espacio.";
+            } catch (err) {
+                console.error("Error guardando:", err);
             }
         }
 
         e.target.value = ''; 
         renderSongs();
-        
-        if (loadedCount > 0) {
-            showToast("✅ " + loadedCount + " canción(es) guardada(s)");
-        } else if (errorMsg) {
-            alert(errorMsg);
-        }
+        showToast("✅ " + loadedCount + " guardadas");
     });
 
     $('tab-all').addEventListener('click', () => { state.currentTab = 'all'; updateTabs(); renderSongs(); });
@@ -538,12 +508,10 @@
         await initDB();
         const savedSongs = await getSongsFromDB();
         
-        // Al cargar, reconstruimos el Blob desde el ArrayBuffer guardado
         state.songs = savedSongs.map(song => {
-            const blob = new Blob([song.data], { type: song.type });
             return {
                 ...song,
-                url: URL.createObjectURL(blob)
+                url: URL.createObjectURL(song.fileBlob)
             };
         });
 
