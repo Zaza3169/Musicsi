@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     
+    <!-- Etiquetas PWA para que se vea como App Nativa en iOS -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#000000">
@@ -22,7 +23,6 @@
         
         header { padding: calc(20px + var(--safe-top)) 0 20px; }
         
-        /* ESTILO PARA LA VERSIÓN */
         .version-text { font-size: 12px; color: var(--gray); margin-top: 4px; margin-bottom: 20px; display: block; font-weight: 600; }
         h1 { font-size: 34px; font-weight: 700; margin: 0; letter-spacing: -0.5px; }
         
@@ -45,7 +45,6 @@
 
         .add-container { position: relative; width: 100%; margin-bottom: 20px; }
         .add-label { display: flex; width: 100%; padding: 14px; border-radius: 12px; background: var(--accent); color: white; font-size: 16px; font-weight: 600; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
-        /* Input visible para pruebas (puedes ocultarlo luego) */
         #file-input { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; }
 
         .song-wrapper { position: relative; margin-bottom: 2px; height: 64px; background: var(--accent); overflow: hidden; border-radius: 10px; touch-action: pan-y; }
@@ -95,7 +94,6 @@
 
         .empty-state { text-align: center; color: var(--gray); padding: 60px 20px; font-size: 15px; }
         
-        /* BOTÓN DE RESET PARA PRUEBAS */
         .reset-btn { background: #ff3b30; color: white; border: none; padding: 10px; border-radius: 10px; margin-top: 30px; width: 100%; font-weight: 600; font-size: 14px; }
     </style>
 </head>
@@ -105,7 +103,7 @@
 
 <header>
     <h1>Spotijai</h1>
-    <span class="version-text">Versión 1.2 (Safari Fix)</span>
+    <span class="version-text">Versión 1.3 (MIME Fix)</span>
     
     <div class="tabs">
         <div class="tab active" id="tab-all">Todas</div>
@@ -113,9 +111,9 @@
     </div>
 
     <div class="add-container">
-        <!-- Usamos input con z-index alto, esto es a prueba de fallos en iOS -->
         <div class="add-label">＋ Añadir Música</div>
-        <input type="file" id="file-input" accept="audio/*" multiple>
+        <!-- Aquí está el cambio clave para Safari: accept explícito -->
+        <input type="file" id="file-input" accept="audio/mpeg,audio/mp4,audio/x-m4a,.mp3,.m4a,.wav,.ogg" multiple>
     </div>
 </header>
 
@@ -234,10 +232,9 @@
         toast.textContent = msg;
         toast.classList.add('show');
         clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => toast.classList.remove('show'), 3000); // 3 segundos para que lo leas bien
+        toastTimeout = setTimeout(() => toast.classList.remove('show'), 3000);
     }
 
-    // LÓGICA DE SUBIDA CON DIAGNÓSTICO DE ERRORES
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
         
@@ -253,15 +250,8 @@
         let errorMsg = "";
 
         for (const file of files) {
-            // DIAGNÓSTICO: Si el archivo pesa 0, es porque iCloud no lo descargó
             if (file.size === 0) {
                 errorMsg = "❌ El archivo " + file.name + " está vacío. Descárgalo de iCloud primero.";
-                continue;
-            }
-            
-            // DIAGNÓSTICO: Si el archivo no es de audio
-            if (!file.type.includes('audio') && !file.name.endsWith('.mp3') && !file.name.endsWith('.m4a')) {
-                errorMsg = "❌ El archivo " + file.name + " no parece ser audio.";
                 continue;
             }
             
@@ -289,7 +279,7 @@
         if (loadedCount > 0) {
             showToast("✅ " + loadedCount + " canción(es) guardada(s)");
         } else if (errorMsg) {
-            alert(errorMsg); // Usamos alert para que no se pierda el mensaje
+            alert(errorMsg);
         }
     });
 
@@ -518,7 +508,6 @@
         }
     });
 
-    // BORRAR BASE DE DATOS (Para pruebas)
     window.resetDB = function() {
         if (confirm("¿Seguro que quieres borrar todas las canciones guardadas?")) {
             indexedDB.deleteDatabase(DB_NAME);
