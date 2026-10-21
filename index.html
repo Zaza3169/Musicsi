@@ -112,7 +112,7 @@
 
     <div class="add-container">
         <div class="add-label">＋ Añadir Música</div>
-        <input type="file" id="file-input" accept="audio/mpeg,audio/mp4,audio/x-m4a,.mp3,.m4a,.wav,.ogg" multiple>
+        <input type="file" id="file-input" accept="audio/*" multiple>
     </div>
 </header>
 
@@ -181,18 +181,56 @@
 <audio id="audio" preload="metadata"></audio>
 
 <script>
-    const APP_VERSION = "Versión 2.3 (UI Sync Fix)";
+    const APP_VERSION = "Versión 3.0 (IndexedDB Native Fix)";
     document.getElementById('app-version').textContent = APP_VERSION;
 
+    const DB_NAME = 'SpotijaiFinalDB';
+    const DB_VERSION = 1;
+    let db;
+
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_NAME, DB_VERSION);
+            req.onupgradeneeded = (e) => {
+                const dbInst = e.target.result;
+                if (!dbInst.objectStoreNames.contains('songs')) {
+                    dbInst.createObjectStore('songs', { keyPath: 'id' });
+                }
+            };
+            req.onsuccess = (e) => { db = e.target.result; resolve(); };
+            req.onerror = (e) => reject(e);
+        });
+    }
+
+    function saveSongToDB(song) {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('songs', 'readwrite');
+            tx.objectStore('songs').put(song);
+            tx.oncomplete = () => resolve();
+            tx.onerror = (e) => reject(e);
+        });
+    }
+
+    function getAllSongsFromDB() {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('songs', 'readonly');
+            const req = tx.objectStore('songs').getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e);
+        });
+    }
+
+    const svgMusic = '<svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>';
+    const svgPlay = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+    const svgPause = '<svg viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
     let state = { 
-        songs: JSON.parse(localStorage.getItem('spotijai_library') || '[]'), 
+        songs: [], 
         playlist: JSON.parse(localStorage.getItem('spotijai_playlist') || '[]'), 
         currentId: null, 
         isPlaying: false, 
         currentTab: 'all' 
     };
-
-    const audioURLs = {}; 
 
     const $ = (id) => document.getElementById(id);
     const audio = $('audio');
@@ -208,55 +246,37 @@
 
     $('file-input').addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
+        if (files.length === 0) return;
         
-        if (files.length === 0) {
-            showToast("⚠️ No se seleccionó ningún archivo.");
-            return;
-        }
-        
-        showToast("⏳ Procesando " + files.length + " archivo(s)...");
-        
+        showToast("⏳ Guardando " + files.length + " canción(es)...");
         let loadedCount = 0;
 
         for (const file of files) {
-            if (file.size === 0) continue;
-            
             try {
-                const songId = 'song_' + Date.now().toString() + Math.random().toString(36).substring(2, 6);
-                
-                const objectUrl = URL.createObjectURL(file);
-                audioURLs[songId] = objectUrl;
-
-                const songData = {
+                const songId = 'id_' + Date.now().toString() + '_' + Math.random().toString(36).substr(2, 4);
+                const songRecord = {
                     id: songId,
                     name: file.name.replace(/\.[^.]+$/, ''),
-                    artist: 'Archivo local'
+                    artist: 'Archivo Local',
+                    fileData: file
                 };
-                
-                state.songs.push(songData);
 
-                if ('caches' in window) {
-                    const cache = await caches.open('spotijai-audio-cache-v1');
-                    await cache.put(songId, new Response(file));
-                }
-
+                await saveSongToDB(songRecord);
+                songRecord.url = URL.createObjectURL(file);
+                state.songs.push(songRecord);
                 loadedCount++;
-            } catch(err) {
-                console.error("Error guardando archivo:", err);
+            } catch (err) {
+                console.error("Error guardando en IndexedDB", err);
             }
         }
 
-        // Guardamos y actualizamos la interfaz de inmediato
-        localStorage.setItem('spotijai_library', JSON.stringify(state.songs));
-        e.target.value = ''; 
-        
-        $('empty-msg').style.display = 'none';
+        e.target.value = '';
         renderSongs();
-        
+
         if (loadedCount > 0) {
-            showToast("✅ " + loadedCount + " canción(es) añadida(s)");
+            showToast("✅ " + loadedCount + " canción(es) guardada(s)");
         } else {
-            alert("❌ No se pudieron cargar los archivos.");
+            alert("Error al intentar guardar los archivos.");
         }
     });
 
@@ -363,21 +383,12 @@
         
         state.currentId = id;
 
-        if (!audioURLs[id] && 'caches' in window) {
-            try {
-                const cache = await caches.open('spotijai-audio-cache-v1');
-                const response = await cache.match(id);
-                if (response) {
-                    const blob = await response.blob();
-                    audioURLs[id] = URL.createObjectURL(blob);
-                }
-            } catch (err) {
-                console.error("Error recuperando de caché:", err);
-            }
+        if (!song.url && song.fileData) {
+            song.url = URL.createObjectURL(song.fileData);
         }
 
-        if (audioURLs[id]) {
-            audio.src = audioURLs[id];
+        if (song.url) {
+            audio.src = song.url;
             audio.load();
             try {
                 await audio.play();
@@ -387,8 +398,6 @@
             } catch (err) {
                 showToast("❌ Toca de nuevo para reproducir");
             }
-        } else {
-            showToast("⚠️ Vuelve a seleccionar este archivo MP3");
         }
 
         document.querySelectorAll('.song-content').forEach(el => {
@@ -497,32 +506,24 @@
         }
     });
 
-    window.resetDB = async function() {
-        if (confirm("¿Seguro que quieres borrar toda la biblioteca guardada?")) {
+    window.resetDB = function() {
+        if (confirm("¿Seguro que quieres borrar todas las canciones guardadas?")) {
+            indexedDB.deleteDatabase(DB_NAME);
             localStorage.clear();
-            if ('caches' in window) {
-                await caches.delete('spotijai-audio-cache-v1');
-            }
             location.reload();
         }
     }
 
     (async function init() {
-        if ('caches' in window) {
-            try {
-                const cache = await caches.open('spotijai-audio-cache-v1');
-                const keys = await cache.keys();
-                for (const request of keys) {
-                    const response = await cache.match(request);
-                    if (response) {
-                        const blob = await response.blob();
-                        audioURLs[request.url.split('/').pop()] = URL.createObjectURL(blob);
-                    }
-                }
-            } catch (e) {
-                console.log("Caché no disponible.");
-            }
-        }
+        await initDB();
+        const savedSongs = await getAllSongsFromDB();
+        
+        state.songs = savedSongs.map(item => {
+            return {
+                ...item,
+                url: item.fileData ? URL.createObjectURL(item.fileData) : null
+            };
+        });
 
         $('empty-msg').style.display = 'none';
         renderSongs();
